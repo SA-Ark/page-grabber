@@ -167,13 +167,19 @@ async function executeCommand(cmd) {
         break;
       }
       case 'execute_script': {
-        // Intentional dynamic code evaluation — this is the bridge's remote-exec capability.
-        // Auth boundary: WebSocket token verification on the server side.
+        // Execute expression in the PAGE context (not service worker).
+        // This is the bridge's core remote-exec capability — intentional dynamic evaluation.
+        // Security boundary: token-authenticated WebSocket connection to trusted relay server.
+        // MV3 CSP blocks new Function() in service workers, so we pass the expression
+        // as a string arg and evaluate it in the content script (page context).
         const tabId = params.tabId || (await getActiveTabId());
-        const wrappedFn = new Function('return (' + params.expression + ')'); // eslint-disable-line no-new-func
         const [{ result }] = await chrome.scripting.executeScript({
           target: { tabId },
-          func: wrappedFn,
+          func: (expr) => {
+            // Intentional: remote-exec is this tool's purpose. Auth is at the WS layer.
+            return (0, eval)(expr); // indirect eval in page context
+          },
+          args: [params.expression]
         });
         data = result;
         break;
