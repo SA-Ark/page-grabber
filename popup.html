@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; width: 280px; padding: 14px; margin: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; width: 320px; padding: 14px; margin: 0; }
     h3 { margin: 0 0 10px 0; font-size: 14px; }
     button { display: block; width: 100%; margin: 6px 0; padding: 10px; font-size: 13px;
              background: #1a1a1a; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
@@ -15,6 +15,21 @@
 </head>
 <body>
   <h3>Page Grabber</h3>
+
+  <!-- Bridge Section -->
+  <div id="bridge-section" style="border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-bottom: 10px;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <span id="bridge-dot" style="width:10px;height:10px;border-radius:50%;background:#ccc;display:inline-block;"></span>
+      <span id="bridge-label" style="font-size:12px;color:#888;">Bridge: Disconnected</span>
+    </div>
+    <input id="bridge-url" type="text" placeholder="wss://bridge.chakrakali.com/ws/extension"
+           style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;border:1px solid #ddd;border-radius:4px;margin-bottom:4px;">
+    <input id="bridge-token" type="password" placeholder="Bearer token"
+           style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;">
+    <button id="bridge-toggle" style="background:#0a6e0a;font-size:12px;padding:8px;">Connect Bridge</button>
+  </div>
+
+  <!-- Existing Grab Buttons -->
   <button id="auto-grab" style="background:#0a6e0a">Auto-grab ALL pages → one .txt file</button>
   <button id="grab">Grab this page → save .txt</button>
   <button id="grab-json" class="secondary">Grab this page → save .json</button>

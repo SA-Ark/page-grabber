@@ -1,6 +1,53 @@
 const statusEl = document.getElementById('status');
 const setStatus = (msg) => { statusEl.textContent = msg; };
 
+// --- Bridge UI ---
+const dot = document.getElementById('bridge-dot');
+const bridgeLabel = document.getElementById('bridge-label');
+const toggleBtn = document.getElementById('bridge-toggle');
+const urlInput = document.getElementById('bridge-url');
+const tokenInput = document.getElementById('bridge-token');
+
+function updateBridgeUI(connected) {
+  dot.style.background = connected ? '#0a6e0a' : '#ccc';
+  bridgeLabel.textContent = connected ? 'Bridge: Connected' : 'Bridge: Disconnected';
+  bridgeLabel.style.color = connected ? '#0a6e0a' : '#888';
+  toggleBtn.textContent = connected ? 'Disconnect' : 'Connect Bridge';
+  toggleBtn.style.background = connected ? '#c00' : '#0a6e0a';
+}
+
+// Load saved settings
+chrome.storage.local.get(['bridgeUrl', 'bridgeToken', 'bridgeEnabled'], (data) => {
+  urlInput.value = data.bridgeUrl || 'wss://bridge.chakrakali.com/ws/extension';
+  tokenInput.value = data.bridgeToken || '';
+  chrome.runtime.sendMessage({ type: 'getStatus' }, (resp) => {
+    if (resp) updateBridgeUI(resp.connected);
+  });
+});
+
+toggleBtn.onclick = async () => {
+  const resp = await new Promise(r => chrome.runtime.sendMessage({ type: 'getStatus' }, r));
+  if (resp?.connected) {
+    chrome.runtime.sendMessage({ type: 'disconnect' });
+    updateBridgeUI(false);
+  } else {
+    const url = urlInput.value.trim();
+    const token = tokenInput.value.trim();
+    if (!url || !token) { setStatus('Enter relay URL and token'); return; }
+    await chrome.storage.local.set({ bridgeUrl: url, bridgeToken: token });
+    chrome.runtime.sendMessage({ type: 'connect' }, () => {});
+    setStatus('Connecting...');
+  }
+};
+
+// Listen for status updates from background
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'status') updateBridgeUI(msg.connected);
+});
+// --- End Bridge UI ---
+
+// --- Existing Page Grabber Functionality ---
+
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) throw new Error('No active tab');
@@ -53,7 +100,6 @@ document.getElementById('auto-grab').onclick = async () => {
     }
     setStatus('Starting auto-grab...\nScanning for pagination...');
 
-    // Run the full auto-grab inside the page via a long-running content script
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
       func: () => {
@@ -61,37 +107,29 @@ document.getElementById('auto-grab').onclick = async () => {
           const delay = (ms) => new Promise(r => setTimeout(r, ms));
           const allPages = [];
           let pageNum = 0;
-          let maxPages = 200; // safety limit
+          let maxPages = 200;
 
-          // Try to detect total page count from the viewer
           const findPageInfo = () => {
-            // Common patterns: "Page X of Y", "1/62", page counter elements
             const body = document.body.innerText;
             const match = body.match(/(?:page\s+\d+\s+of\s+(\d+)|\d+\s*\/\s*(\d+)|(\d+)\s+pages)/i);
             if (match) return parseInt(match[1] || match[2] || match[3]);
             return null;
           };
 
-          // Find the "next page" button — common selectors for document viewers
           const findNextButton = () => {
             const selectors = [
-              // SecureCafe / generic document viewers
               'a[id*="Next"]', 'a[id*="next"]', 'button[id*="Next"]', 'button[id*="next"]',
               'a[class*="next"]', 'button[class*="next"]',
               'a[title*="Next"]', 'button[title*="Next"]',
               'a[aria-label*="Next"]', 'button[aria-label*="Next"]',
               '[class*="next-page"]', '[class*="nextPage"]',
               '[class*="page-next"]', '[class*="pageNext"]',
-              // Arrow buttons
               'a[class*="arrow-right"]', 'button[class*="arrow-right"]',
               'a[class*="forward"]', 'button[class*="forward"]',
-              // Generic pagination
               '.pagination a:last-child', '.pager .next a',
               'nav[aria-label*="pagination"] a:last-child',
-              // Icon-based next buttons
               'a > .fa-chevron-right', 'a > .fa-arrow-right',
               'button > .fa-chevron-right', 'button > .fa-arrow-right',
-              // Input-based page navigation
               'img[alt*="Next"]', 'img[title*="Next"]',
               'input[value*="Next"]', 'input[value*=">"]',
               'a[href*="javascript"][id*="Next"]',
@@ -99,12 +137,10 @@ document.getElementById('auto-grab').onclick = async () => {
             for (const sel of selectors) {
               const el = document.querySelector(sel);
               if (el) {
-                // Walk up to the clickable parent if we matched a child icon
                 const clickable = el.closest('a, button') || el;
-                if (clickable.offsetParent !== null) return clickable; // visible
+                if (clickable.offsetParent !== null) return clickable;
               }
             }
-            // Fallback: look for any element containing "Next" or ">" text
             const allButtons = [...document.querySelectorAll('a, button, input[type="button"], input[type="submit"]')];
             for (const b of allButtons) {
               const txt = (b.textContent || b.value || '').trim();
@@ -118,20 +154,14 @@ document.getElementById('auto-grab').onclick = async () => {
 
           while (pageNum < maxPages) {
             pageNum++;
-            // Grab current page text
             const main = document.querySelector('main, article, [role="main"]');
             const src = main || document.body;
             const text = src ? src.innerText : '';
             allPages.push(`\n--- PAGE ${pageNum} ---\n\n${text}`);
 
-            // Find and click next
             const nextBtn = findNextButton();
-            if (!nextBtn) {
-              // No next button found — we're done or on the last page
-              break;
-            }
+            if (!nextBtn) break;
 
-            // Check if next button is disabled
             if (nextBtn.disabled || nextBtn.classList.contains('disabled') ||
                 nextBtn.getAttribute('aria-disabled') === 'true' ||
                 nextBtn.style.opacity === '0.5' || nextBtn.style.pointerEvents === 'none') {
@@ -139,7 +169,7 @@ document.getElementById('auto-grab').onclick = async () => {
             }
 
             nextBtn.click();
-            await delay(1500); // wait for page content to load
+            await delay(1500);
           }
 
           resolve({
