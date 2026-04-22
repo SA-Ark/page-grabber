@@ -37,6 +37,12 @@ toggleBtn.onclick = async () => {
     await chrome.storage.local.set({ bridgeUrl: url, bridgeToken: token });
     chrome.runtime.sendMessage({ type: 'connect' }, () => {});
     setStatus('Connecting...');
+    // Clear stale status once connected (status update comes via broadcast)
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ type: 'getStatus' }, (r) => {
+        if (r?.connected) setStatus('');
+      });
+    }, 2000);
   }
 };
 
