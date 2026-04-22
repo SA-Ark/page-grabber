@@ -249,6 +249,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+// --- Service Worker Keep-Alive ---
+// MV3 service workers die after ~30s of inactivity, killing our WebSocket.
+// Use chrome.alarms to wake the worker every 25s and maintain the connection.
+
+chrome.alarms.create('bridge-keepalive', { periodInMinutes: 0.4 }); // ~24 seconds
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'bridge-keepalive') {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Send a ping to keep the connection alive
+      ws.send(JSON.stringify({ id: 'keepalive', command: 'ping', params: {} }));
+    }
+  }
+});
+
 // Auto-reconnect on service worker startup if bridge was enabled
 chrome.storage.local.get('bridgeEnabled', (data) => {
   if (data.bridgeEnabled) {
