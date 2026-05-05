@@ -1,0 +1,95 @@
+# ark-notify-services.yml
+# Reusable workflow: notifies ark-bugflow, ark-secguard, ark-lore after CI events.
+# Add to any repo's .github/workflows/ to get instant (not polled) notifications.
+#
+# The sentinel poller handles repos WITHOUT this workflow.
+# This workflow provides FASTER response for repos that have it.
+#
+# Usage: Copy this file to .github/workflows/ark-notify.yml in any SA-Ark repo.
+# Required secrets: VPS_SSH_KEY, VPS_HOST (already set in most repos)
+
+name: Notify Ark Services
+
+on:
+  issues:
+    types: [opened, labeled]
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p 2222 "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Notify on bug issue
+        if: github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'bug')
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          TITLE="${{ github.event.issue.title }}"
+          BODY=$(echo '${{ toJSON(github.event.issue.body) }}' | head -c 2000)
+          URL="${{ github.event.issue.html_url }}"
+
+          ssh -i ~/.ssh/deploy_key -p 2222 -o StrictHostKeyChecking=no \
+            "deploy@${VPS_HOST}" \
+            "curl -sf -X POST http://127.0.0.1:3860/api/bugs \
+              -H 'Content-Type: application/json' \
+              -d '{\"source\":\"github_issue\",\"content\":\"${TITLE}\n${BODY}\",\"repos\":[\"${REPO}\"],\"github_issue_url\":\"${URL}\"}'" \
+            || echo "::warning::bugflow notification failed"
+
+      - name: Notify on PR
+        if: github.event_name == 'pull_request'
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
+
+          ssh -i ~/.ssh/deploy_key -p 2222 -o StrictHostKeyChecking=no \
+            "deploy@${VPS_HOST}" \
+            "curl -sf -X POST http://127.0.0.1:3870/api/scans \
+              -H 'Content-Type: application/json' \
+              -d '{\"repo\":\"${REPO}\",\"pr_number\":${PR_NUM}}'" \
+            || echo "::warning::secguard notification failed"
+
+      - name: Notify on push to main
+        if: github.event_name == 'push'
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          COMMITS='${{ toJSON(github.event.commits) }}'
+          # Send each commit message to lore
+          echo "$COMMITS" | python3 -c "
+          import sys, json
+          commits = json.load(sys.stdin)
+          for c in (commits or []):
+              msg = c.get('message','').replace('\"','\\\\\"')[:500]
+              print(f'{msg}|||{c.get(\"id\",\"\")}')
+          " | while IFS='|||' read -r MSG SHA; do
+            ssh -i ~/.ssh/deploy_key -p 2222 -o StrictHostKeyChecking=no \
+              "deploy@${VPS_HOST}" \
+              "curl -sf -X POST http://127.0.0.1:3880/api/events \
+                -H 'Content-Type: application/json' \
+                -d '{\"source\":\"commit\",\"repo\":\"${REPO}\",\"content\":\"${MSG}\"}'" \
+              || echo "::warning::lore notification failed for ${SHA}"
+          done
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
